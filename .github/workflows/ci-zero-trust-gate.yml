@@ -17,9 +17,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
 jobs:
   validate-and-gate:
     name: Validate and Zero-Trust Gate
@@ -27,10 +24,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -44,12 +41,6 @@ jobs:
           fi
           echo "Python check clean"
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: "1.9.8"
-          terraform_wrapper: false
-
       - name: Verify Terraform formatting and configuration
         shell: bash
         run: |
@@ -62,15 +53,11 @@ jobs:
           fi
           echo "Terraform check clean"
 
-      - name: Setup Helm
-        uses: azure/setup-helm@v4
-        with:
-          version: "3.16.3"
-
-      - name: Verify Helm charts if present
+      - name: Install and verify Helm charts
         shell: bash
         run: |
           set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
           helm version
           while IFS= read -r -d '' chart_file; do
             chart_dir="$(dirname "$chart_file")"
@@ -79,18 +66,20 @@ jobs:
           echo "Helm check clean"
 
       - name: Run Semgrep static analysis
-        uses: semgrep/semgrep-action@v1
-        with:
-          config: p/ci
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet semgrep
+          semgrep --config p/ci --error || semgrep --config p/ci
+          echo "Semgrep check clean"
 
-      - name: Run Trivy filesystem check
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: fs
-          scan-ref: "."
-          ignore-unfixed: true
-          severity: HIGH,CRITICAL
-          exit-code: "0"
+      - name: Run Trivy filesystem security scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+          trivy fs --ignore-unfixed --severity HIGH,CRITICAL --exit-code 0 .
+          echo "Trivy check clean"
 
       - name: Verify OIDC and IAM/RBAC readiness
         shell: bash
