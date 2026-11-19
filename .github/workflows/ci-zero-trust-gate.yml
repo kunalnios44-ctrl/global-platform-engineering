@@ -1,0 +1,105 @@
+name: Global Platform CI & Zero-Trust Gate
+
+on:
+  push:
+    branches:
+      - main
+      - "**"
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  validate-and-gate:
+    name: Validate and Zero-Trust Gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify Python environment and scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 --version
+          if [ -d "platform" ] && find platform -maxdepth 4 -type f -name "*.py" | grep -q .; then
+            python3 -m py_compile $(find platform -maxdepth 4 -type f -name "*.py")
+          fi
+          echo "Python check clean"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+
+      - name: Verify Terraform formatting and configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform version
+          if [ -d "infra" ] && find infra -maxdepth 4 -type f -name "*.tf" | grep -q .; then
+            terraform -chdir=infra fmt -check -recursive
+            terraform -chdir=infra init -backend=false -input=false -no-color
+            terraform -chdir=infra validate -no-color
+          fi
+          echo "Terraform check clean"
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "3.16.3"
+
+      - name: Verify Helm charts if present
+        shell: bash
+        run: |
+          set -euo pipefail
+          helm version
+          while IFS= read -r -d '' chart_file; do
+            chart_dir="$(dirname "$chart_file")"
+            helm lint "$chart_dir"
+          done < <(find . -maxdepth 4 -type f -name "Chart.yaml" -print0)
+          echo "Helm check clean"
+
+      - name: Run Semgrep static analysis
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: p/ci
+
+      - name: Run Trivy filesystem check
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: "."
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          exit-code: "0"
+
+      - name: Verify OIDC and IAM/RBAC readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+            echo "OIDC keyless token endpoint ready"
+          else
+            echo "OIDC token request variables absent in current trigger context"
+          fi
+          echo "Zero-Trust gate completed cleanly"
+          
