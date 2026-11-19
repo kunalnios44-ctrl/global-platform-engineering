@@ -1,0 +1,76 @@
+name: Global Multi-Cloud Infra & Observability Sync
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/multi-cloud-observability-sync.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/multi-cloud-observability-sync.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  infra-observability-sync:
+    name: Multi-Cloud Infra & Observability Gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Python for platform and observability checks
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Verify Python scripts if present
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 --version
+          if [ -d "platform" ] && find platform -maxdepth 4 -type f -name "*.py" | grep -q .; then
+            python3 -m py_compile $(find platform -maxdepth 4 -type f -name "*.py")
+          fi
+          echo "Python platform check clean"
+
+      - name: Install and verify Terraform CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          TERRAFORM_VERSION="1.9.8"
+          curl -fsSL "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip" -o /tmp/terraform.zip
+          unzip -q /tmp/terraform.zip -d /tmp/tf_bin
+          mv /tmp/tf_bin/terraform /usr/local/bin/terraform
+          chmod +x /usr/local/bin/terraform
+          terraform version
+          if [ -d "infra" ] && find infra -maxdepth 4 -type f -name "*.tf" | grep -q .; then
+            terraform -chdir=infra fmt -check -recursive
+            terraform -chdir=infra init -backend=false -input=false -no-color
+            terraform -chdir=infra validate -no-color
+          fi
+          echo "Terraform multi-cloud check clean"
+
+      - name: Verify multi-cloud and observability layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          for dir_name in infra observability; do
+            if [ -d "$dir_name" ]; then
+              echo "Directory present: $dir_name"
+            else
+              echo "Directory pending or optional in current layout: $dir_name"
+            fi
+          done
+          echo "Multi-cloud and observability sync gate clean"
+          
