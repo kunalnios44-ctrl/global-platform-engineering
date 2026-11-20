@@ -1,0 +1,103 @@
+name: Platform Guardrail CI/CD
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "platform-guardrail/**"
+      - "*.go"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/platform-guardrail-ci.yml"
+  pull_request:
+    paths:
+      - "platform-guardrail/**"
+      - "*.go"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/platform-guardrail-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: CI Verification
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.23"
+          cache: false
+
+      - name: Verify Go module and run checks
+        shell: bash
+        run: |
+          if [ -d "platform-guardrail" ] && [ -f "platform-guardrail/go.mod" ]; then
+            TARGET_DIR="platform-guardrail"
+          elif [ -f "go.mod" ]; then
+            TARGET_DIR="."
+          else
+            echo "::error::go.mod not found in platform-guardrail/ or repository root. Add platform-guardrail/go.mod, main.go, and main_test.go."
+            exit 1
+          fi
+
+          cd "$TARGET_DIR"
+
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::Unformatted Go files: $unformatted"
+            exit 1
+          fi
+
+          go vet ./...
+          go test -v -race -cover ./...
+          go build -trimpath -o /tmp/platform-guardrail .
+          test -s /tmp/platform-guardrail
+          echo "CI verification passed in $TARGET_DIR"
+
+  cd:
+    name: CD Package Artifact
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.23"
+          cache: false
+
+      - name: Build and upload Linux release artifact
+        shell: bash
+        env:
+          CGO_ENABLED: 0
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          if [ -d "platform-guardrail" ] && [ -f "platform-guardrail/go.mod" ]; then
+            TARGET_DIR="platform-guardrail"
+          else
+            TARGET_DIR="."
+          fi
+
+          cd "$TARGET_DIR"
+          go build -trimpath -ldflags="-s -w" -o /tmp/platform-guardrail-linux-amd64 .
+          test -s /tmp/platform-guardrail-linux-amd64
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: platform-guardrail-linux-amd64
+          path: /tmp/platform-guardrail-linux-amd64
+          if-no-files-found: error
+          
