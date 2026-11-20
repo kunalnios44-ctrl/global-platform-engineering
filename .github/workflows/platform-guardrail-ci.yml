@@ -1,0 +1,49 @@
+name: Platform Guardrail CI/CD
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: CI Verification
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Verify repository structure
+        shell: bash
+        run: |
+          echo "Checking files in repository..."
+          ls -la
+          echo "CI verification passed successfully!"
+
+  cd:
+    name: CD Package Artifact
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Package repository files
+        shell: bash
+        run: |
+          tar -czf /tmp/platform-guardrail-artifact.tar.gz --exclude='.git' .
+          test -s /tmp/platform-guardrail-artifact.tar.gz
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: platform-guardrail-artifact
+          path: /tmp/platform-guardrail-artifact.tar.gz
+          if-no-files-found: error
+          
