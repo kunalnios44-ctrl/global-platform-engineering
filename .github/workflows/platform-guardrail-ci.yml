@@ -1,0 +1,85 @@
+name: Platform Guardrail CI/CD
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "platform-guardrail/**"
+      - ".github/workflows/platform-guardrail-ci.yml"
+  pull_request:
+    paths:
+      - "platform-guardrail/**"
+      - ".github/workflows/platform-guardrail-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: CI Verification
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: platform-guardrail
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.23"
+          cache: false
+
+      - name: Verify formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "Unformatted Go files detected:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Static analysis
+        run: go vet ./...
+
+      - name: Run unit tests with race detector and coverage
+        run: go test -v -race -cover ./...
+
+      - name: Build CLI binary
+        run: go build -o /tmp/platform-guardrail .
+
+  cd:
+    name: CD Package Artifact
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: platform-guardrail
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.23"
+          cache: false
+
+      - name: Build Linux release binary
+        env:
+          CGO_ENABLED: 0
+          GOOS: linux
+          GOARCH: amd64
+        run: go build -trimpath -ldflags="-s -w" -o /tmp/platform-guardrail-linux-amd64 .
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: platform-guardrail-linux-amd64
+          path: /tmp/platform-guardrail-linux-amd64
+          if-no-files-found: error
+          
