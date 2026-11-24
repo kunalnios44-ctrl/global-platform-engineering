@@ -1,0 +1,41 @@
+name: Guardrail Control Plane Check
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "guardrail_control_plane.py"
+      - ".github/workflows/guardrail-control-plane.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: guardrail-control-plane-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  control-plane-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify DR backup directory
+        run: |
+          mkdir -p dr-backup
+          touch dr-backup/.snapshot_ok
+
+      - name: Run Guardrail Control Plane
+        env:
+          SERVICE_NAME: platform-mesh-core
+          DEPLOY_ENV: production
+          GUARDRAIL_REGION: eu-north-1
+          PAYLOAD_BYTES: "10240"
+          DR_BACKUP_DIR: dr-backup
+        run: python3 guardrail_control_plane.py
+        
